@@ -37,7 +37,7 @@ async def fetch_registered_events() -> list[dict]:
             # ── Step 1: Go to login page ──────────────────────────────
             logger.info("Navigating to login page...")
             await page.goto(LOGIN_URL, wait_until="domcontentloaded", timeout=60_000)
-            await page.wait_for_timeout(4000)
+            await page.wait_for_timeout(8000)
 
             logger.info("Current URL after goto: %s", page.url)
 
@@ -112,11 +112,11 @@ async def fetch_registered_events() -> list[dict]:
 
             # ── Step 6: Go to registered events ──────────────────────
             await page.goto(
-                f"{UNSTOP_BASE}/dashboard/registered",
-                wait_until="domcontentloaded",
-                timeout=60_000
+            f"{UNSTOP_BASE}/dashboard/registered",
+            wait_until="networkidle",
+            timeout=60_000
             )
-            await page.wait_for_timeout(6000)
+            await page.wait_for_timeout(10000)
             logger.info("URL on registrations page: %s", page.url)
 
             # ── Step 7: Get page HTML for debugging ───────────────────
