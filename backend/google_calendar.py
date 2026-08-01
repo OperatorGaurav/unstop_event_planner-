@@ -167,3 +167,19 @@ def delete_event(calendar_event_id: str) -> bool:
     except HttpError as exc:
         logger.error("Failed to delete event: %s", exc)
         return False
+
+
+def event_exists(calendar_event_id: str) -> bool:
+    """Check if a Google Calendar event still exists."""
+    try:
+        service = _get_service()
+        service.events().get(
+            calendarId=CALENDAR_ID,
+            eventId=calendar_event_id,
+        ).execute()
+        return True
+    except HttpError as exc:
+        if exc.resp.status == 404:
+            return False
+        logger.error("Error checking event %s: %s", calendar_event_id, exc)
+        return False
