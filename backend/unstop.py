@@ -30,13 +30,75 @@ async def _login(page: Page) -> None:
     email = os.environ["UNSTOP_EMAIL"]
     password = os.environ["UNSTOP_PASSWORD"]
 
-    await page.goto(LOGIN_URL, wait_until="networkidle")
-    await page.fill('input[type="email"]', email)
-    await page.fill('input[type="password"]', password)
-    await page.click('button[type="submit"]')
+    await page.goto(LOGIN_URL, wait_until="domcontentloaded", timeout=30_000)
+    
+    # Wait for page to settle
+    await page.wait_for_timeout(3000)
+
+    # Try multiple possible email selectors
+    email_selectors = [
+        'input[type="email"]',
+        'input[name="email"]',
+        'input[placeholder*="email" i]',
+        'input[placeholder*="Email" i]',
+        'input[formcontrolname="email"]',
+        'input[id*="email" i]',
+    ]
+    
+    email_filled = False
+    for sel in email_selectors:
+        try:
+            await page.wait_for_selector(sel, timeout=5000)
+            await page.fill(sel, email)
+            email_filled = True
+            logger.info("Filled email with selector: %s", sel)
+            break
+        except Exception:
+            continue
+    
+    if not email_filled:
+        # Take a screenshot for debugging
+        await page.screenshot(path="/tmp/login_debug.png")
+        raise Exception("Could not find email input. Page title: " + await page.title())
+
+    # Try multiple possible password selectors
+    password_selectors = [
+        'input[type="password"]',
+        'input[name="password"]',
+        'input[placeholder*="password" i]',
+        'input[formcontrolname="password"]',
+        'input[id*="password" i]',
+    ]
+    
+    for sel in password_selectors:
+        try:
+            await page.wait_for_selector(sel, timeout=5000)
+            await page.fill(sel, password)
+            logger.info("Filled password with selector: %s", sel)
+            break
+        except Exception:
+            continue
+
+    # Try multiple submit button selectors
+    submit_selectors = [
+        'button[type="submit"]',
+        'button:has-text("Login")',
+        'button:has-text("Log in")',
+        'button:has-text("Sign in")',
+        'input[type="submit"]',
+    ]
+    
+    for sel in submit_selectors:
+        try:
+            await page.click(sel, timeout=5000)
+            logger.info("Clicked submit with selector: %s", sel)
+            break
+        except Exception:
+            continue
+
     # Wait for navigation away from login page
-    await page.wait_for_url(lambda url: "login" not in url, timeout=15_000)
-    logger.info("Logged in to Unstop successfully.")
+    await page.wait_for_timeout(5000)
+    logger.info("Login attempted, current URL: %s", page.url)
 
 
 async def _parse_event_card(card) -> Optional[dict]:
@@ -106,19 +168,31 @@ async def fetch_registered_events() -> list[dict]:
             # Navigate to registrations page
             await page.goto(
                 f"{UNSTOP_BASE}/dashboard/registered",
-                wait_until="networkidle",
-                timeout=20_000,
+                wait_until="domcontentloaded",
+                timeout=30_000,
             )
+            await page.wait_for_timeout(5000)
 
-            # Wait for event cards to appear
-            await page.wait_for_selector(
-                ".competition-card, .registered-card, [class*='competition']",
-                timeout=10_000,
-            )
-
-            cards = await page.query_selector_all(
-                ".competition-card, .registered-card, [class*='competition-card']"
-            )
+            # Try multiple card selectors
+            card_selectors = [
+                ".competition-card",
+                ".registered-card", 
+                "[class*='competition-card']",
+                "[class*='opportunity-card']",
+                "app-competition-card",
+                ".card",
+            ]
+            
+            cards = []
+            for sel in card_selectors:
+                try:
+                    await page.wait_for_selector(sel, timeout=8000)
+                    cards = await page.query_selector_all(sel)
+                    if cards:
+                        logger.info("Found %d cards with selector: %s", len(cards), sel)
+                        break
+                except Exception:
+                    continue
             logger.info("Found %d event cards.", len(cards))
 
             events = []
