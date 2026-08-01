@@ -5,8 +5,7 @@ Scraper for Unstop registered events using Playwright.
 import os
 import re
 import logging
-from typing import Optional
-from playwright.async_api import async_playwright, Page, Browser
+from playwright.async_api import async_playwright, Browser
 
 logger = logging.getLogger(__name__)
 
@@ -34,23 +33,12 @@ async def fetch_registered_events() -> list[dict]:
             email = os.environ["UNSTOP_EMAIL"]
             password = os.environ["UNSTOP_PASSWORD"]
 
-            # ── Step 1: Go to login page ──────────────────────────────
+            # ── Step 1: Login ─────────────────────────────────────────
             logger.info("Navigating to login page...")
             await page.goto(LOGIN_URL, wait_until="domcontentloaded", timeout=60_000)
-            await page.wait_for_timeout(8000)
+            await page.wait_for_timeout(4000)
 
-            logger.info("Current URL after goto: %s", page.url)
-
-            # ── Step 2: Fill email ────────────────────────────────────
-            email_selectors = [
-                'input[type="email"]',
-                'input[name="email"]',
-                'input[formcontrolname="email"]',
-                'input[placeholder*="mail" i]',
-                'input[placeholder*="Email" i]',
-            ]
-
-            for sel in email_selectors:
+            for sel in ['input[type="email"]', 'input[name="email"]', 'input[formcontrolname="email"]']:
                 try:
                     el = await page.query_selector(sel)
                     if el:
@@ -58,21 +46,12 @@ async def fetch_registered_events() -> list[dict]:
                         await el.fill(email)
                         logger.info("Filled email with: %s", sel)
                         break
-                except Exception as e:
-                    logger.debug("Email selector %s failed: %s", sel, e)
+                except Exception:
                     continue
 
             await page.wait_for_timeout(1000)
 
-            # ── Step 3: Fill password ─────────────────────────────────
-            password_selectors = [
-                'input[type="password"]',
-                'input[name="password"]',
-                'input[formcontrolname="password"]',
-                'input[placeholder*="assword" i]',
-            ]
-
-            for sel in password_selectors:
+            for sel in ['input[type="password"]', 'input[name="password"]', 'input[formcontrolname="password"]']:
                 try:
                     el = await page.query_selector(sel)
                     if el:
@@ -80,90 +59,61 @@ async def fetch_registered_events() -> list[dict]:
                         await el.fill(password)
                         logger.info("Filled password with: %s", sel)
                         break
-                except Exception as e:
-                    logger.debug("Password selector %s failed: %s", sel, e)
+                except Exception:
                     continue
 
             await page.wait_for_timeout(1000)
 
-            # ── Step 4: Click submit ──────────────────────────────────
-            submit_selectors = [
-                'button[type="submit"]',
-                'button:has-text("Login")',
-                'button:has-text("Log In")',
-                'button:has-text("Sign in")',
-                'button:has-text("Continue")',
-            ]
-
-            for sel in submit_selectors:
+            for sel in ['button[type="submit"]', 'button:has-text("Login")', 'button:has-text("Log In")', 'button:has-text("Sign in")']:
                 try:
                     el = await page.query_selector(sel)
                     if el:
                         await el.click()
                         logger.info("Clicked submit: %s", sel)
                         break
-                except Exception as e:
-                    logger.debug("Submit selector %s failed: %s", sel, e)
+                except Exception:
                     continue
 
-            # ── Step 5: Wait for login to complete ────────────────────
-            await page.wait_for_timeout(6000)
-            logger.info("URL after login attempt: %s", page.url)
+            # Wait for login to complete
+            await page.wait_for_timeout(8000)
+            logger.info("URL after login: %s", page.url)
 
-            # ── Step 6: Go to registered events ──────────────────────
+            # ── Step 2: Go to registrations page ─────────────────────
             await page.goto(
-            f"{UNSTOP_BASE}/dashboard/registered",
-            wait_until="networkidle",
-            timeout=60_000
+                f"{UNSTOP_BASE}/dashboard/registered",
+                wait_until="networkidle",
+                timeout=60_000
             )
             await page.wait_for_timeout(10000)
             logger.info("URL on registrations page: %s", page.url)
 
-            # ── Step 7: Get page HTML for debugging ───────────────────
-            html = await page.content()
-            logger.info("Page HTML length: %d", len(html))
-            logger.info("Page HTML snippet: %s", html[:2000])
+            # ── Step 3: Wait for listings to appear ───────────────────
+            try:
+                await page.wait_for_selector("div.listing", timeout=15000)
+            except Exception:
+                logger.warning("Timed out waiting for div.listing")
 
-            # ── Step 8: Try to find event cards ──────────────────────
-            card_selectors = [
-                ".competition-card",
-                ".registered-card",
-                "[class*='competition-card']",
-                "[class*='opportunity']",
-                "[class*='card']",
-                "app-competition-card",
-                ".list-item",
-                "li",
-            ]
+            # ── Step 4: Scroll to load all events ─────────────────────
+            await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+            await page.wait_for_timeout(3000)
 
-            cards = []
-            for sel in card_selectors:
-                try:
-                    found = await page.query_selector_all(sel)
-                    if found and len(found) > 0:
-                        cards = found
-                        logger.info("Found %d cards with: %s", len(cards), sel)
-                        break
-                except Exception as e:
-                    logger.debug("Card selector %s failed: %s", sel, e)
-                    continue
+            # ── Step 5: Parse listings ────────────────────────────────
+            cards = await page.query_selector_all("div.listing")
+            logger.info("Found %d listing cards", len(cards))
 
-            if not cards:
-                logger.warning("No event cards found. Returning empty list.")
-                return []
-
-            # ── Step 9: Parse cards ───────────────────────────────────
             events = []
             for card in cards:
                 try:
-                    title_el = await card.query_selector(
-                        ".competition-name, h3, h2, .title, [class*='title'], [class*='name']"
-                    )
-                    title = (await title_el.inner_text()).strip() if title_el else None
+                    # Title
+                    title_el = await card.query_selector("h2.double-wrap, h2, h3")
+                    if not title_el:
+                        continue
+                    title = (await title_el.inner_text()).strip()
                     if not title:
                         continue
 
-                    url_el = await card.query_selector("a[href]")
+                    # URL
+                    url_el = await card.query_selector("a.wrapper_left, a[href]")
                     relative_url = await url_el.get_attribute("href") if url_el else ""
                     event_url = (
                         f"{UNSTOP_BASE}{relative_url}"
@@ -171,36 +121,47 @@ async def fetch_registered_events() -> list[dict]:
                         else relative_url
                     )
 
-                    unstop_id_match = re.search(r"/(\d+)/?$", event_url or "")
-                    unstop_id = unstop_id_match.group(1) if unstop_id_match else event_url
+                    # ID from URL
+                    unstop_id_match = re.search(r"-(\d+)/?$", event_url or "")
+                    unstop_id = unstop_id_match.group(1) if unstop_id_match else title
 
-                    date_text = ""
-                    for sel in [".date", ".event-date", '[class*="date"]']:
-                        date_el = await card.query_selector(sel)
-                        if date_el:
-                            date_text = (await date_el.inner_text()).strip()
+                    # Date — "Registered on: 31 Jul 26, 11:20 AM IST"
+                    date_text = None
+                    date_els = await card.query_selector_all("div.item, div.dtls, div.m_dtls div")
+                    for el in date_els:
+                        text = (await el.inner_text()).strip()
+                        if "registered on" in text.lower() or re.search(r'\d{1,2}\s\w{3}\s\d{2}', text):
+                            # Extract just the date part after the colon
+                            if ":" in text:
+                                date_text = text.split(":", 1)[1].strip()
+                            else:
+                                date_text = text
                             break
 
-                    deadline_text = ""
-                    for sel in [".deadline", ".reg-deadline", '[class*="deadline"]']:
-                        dl_el = await card.query_selector(sel)
-                        if dl_el:
-                            deadline_text = (await dl_el.inner_text()).strip()
+                    # Deadline — look for any date-like text mentioning deadline/ends
+                    deadline_text = None
+                    all_text_els = await card.query_selector_all("div, span, p")
+                    for el in all_text_els:
+                        text = (await el.inner_text()).strip()
+                        if any(word in text.lower() for word in ["deadline", "ends", "last date", "apply by"]):
+                            deadline_text = text
                             break
 
                     events.append({
-                        "unstop_id": unstop_id or title,
+                        "unstop_id": unstop_id,
                         "title": title,
-                        "date": date_text or None,
+                        "date": date_text,
                         "time": None,
-                        "deadline": deadline_text or None,
+                        "deadline": deadline_text,
                         "event_url": event_url or None,
                     })
+                    logger.info("Parsed event: %s", title)
+
                 except Exception as exc:
                     logger.warning("Failed to parse card: %s", exc)
                     continue
 
-            logger.info("Parsed %d events total", len(events))
+            logger.info("Total events parsed: %d", len(events))
             return events
 
         except Exception as exc:
