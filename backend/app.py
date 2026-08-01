@@ -7,7 +7,8 @@ Endpoints:
   POST /api/sync            → trigger a manual sync
   GET  /api/logs            → last N sync log entries
 """
-
+import subprocess
+import os
 import logging
 from contextlib import asynccontextmanager
 
