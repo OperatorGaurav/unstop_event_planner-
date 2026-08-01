@@ -1,14 +1,7 @@
 """
 Unstop Calendar Sync — FastAPI backend.
-
-Endpoints:
-  GET  /api/status          → last sync info + event count
-  GET  /api/events          → list of active synced events
-  POST /api/sync            → trigger a manual sync
-  GET  /api/logs            → last N sync log entries
 """
-import subprocess
-import os
+
 import logging
 from contextlib import asynccontextmanager
 
@@ -26,45 +19,30 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-async def ensure_browser():
-    """Download Playwright browser if not present."""
-    browser_path = os.path.expanduser("~/.cache/ms-playwright")
-    if not os.path.exists(browser_path):
-        subprocess.run(["playwright", "install", "chromium"], check=True)
-      
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
-    await ensure_browser()
     start_scheduler()
     yield
     stop_scheduler()
 
-app = FastAPI(
-    title="Unstop Calendar Sync",
-    version="1.0.0",
-    lifespan=lifespan,
-)
+
+app = FastAPI(title="Unstop Calendar Sync", version="1.0.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],  # Next.js dev server
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 
-# ── Status ────────────────────────────────────────────────────────────────────
-
 @app.get("/api/status")
 def get_status(db: Session = Depends(get_db)):
-    """Return a quick dashboard summary."""
-    last_log: SyncLog | None = (
-        db.query(SyncLog).order_by(SyncLog.synced_at.desc()).first()
-    )
+    last_log = db.query(SyncLog).order_by(SyncLog.synced_at.desc()).first()
     active_count = db.query(Event).filter(Event.is_active == True).count()
-
     return {
         "active_events": active_count,
         "last_sync": {
@@ -77,17 +55,9 @@ def get_status(db: Session = Depends(get_db)):
     }
 
 
-# ── Events ────────────────────────────────────────────────────────────────────
-
 @app.get("/api/events")
 def list_events(db: Session = Depends(get_db)):
-    """Return all active synced events ordered by date."""
-    events = (
-        db.query(Event)
-        .filter(Event.is_active == True)
-        .order_by(Event.date.asc())
-        .all()
-    )
+    events = db.query(Event).filter(Event.is_active == True).order_by(Event.date.asc()).all()
     return [e.to_dict() for e in events]
 
 
@@ -99,27 +69,16 @@ def get_event(event_id: int, db: Session = Depends(get_db)):
     return event.to_dict()
 
 
-# ── Manual sync ───────────────────────────────────────────────────────────────
-
 @app.post("/api/sync")
 async def trigger_sync():
-    """Trigger an immediate sync (same logic as the scheduled job)."""
-    logger.info("Manual sync triggered via API.")
+    logger.info("Manual sync triggered.")
     result = await run_sync()
     return result
 
 
-# ── Logs ──────────────────────────────────────────────────────────────────────
-
 @app.get("/api/logs")
 def get_logs(limit: int = 20, db: Session = Depends(get_db)):
-    """Return the last `limit` sync log entries."""
-    logs = (
-        db.query(SyncLog)
-        .order_by(SyncLog.synced_at.desc())
-        .limit(limit)
-        .all()
-    )
+    logs = db.query(SyncLog).order_by(SyncLog.synced_at.desc()).limit(limit).all()
     return [
         {
             "id": log.id,
@@ -133,8 +92,6 @@ def get_logs(limit: int = 20, db: Session = Depends(get_db)):
         for log in logs
     ]
 
-
-# ── Health check ──────────────────────────────────────────────────────────────
 
 @app.get("/health")
 def health():
