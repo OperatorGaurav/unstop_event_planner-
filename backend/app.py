@@ -26,14 +26,19 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-
+async def ensure_browser():
+    """Download Playwright browser if not present."""
+    browser_path = os.path.expanduser("~/.cache/ms-playwright")
+    if not os.path.exists(browser_path):
+        subprocess.run(["playwright", "install", "chromium"], check=True)
+      
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_db()
+    await ensure_browser()
     start_scheduler()
     yield
     stop_scheduler()
-
 
 app = FastAPI(
     title="Unstop Calendar Sync",
